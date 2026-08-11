@@ -633,8 +633,11 @@ class TestPersistTokenRecord:
         # Non-claude_code provider models keep their raw namespace verbatim.
         assert "claude-sonnet-4" in history["models"]
         # claude_code models are canonicalized so pre/post-migration records
-        # aggregate into one bucket: bare 'opus' -> canonical 'opus-4.8-1m'.
-        assert "opus-4.8-1m" in history["models"]
+        # aggregate into one bucket: bare 'opus' -> canonical 'opus-4.8'. That is
+        # the 200K row because 'opus' is the claude backend's wire value for Opus
+        # WITHOUT the 1M flag ('opus[1m]' carries it), and a provider id outranks
+        # the same string used as an alias elsewhere.
+        assert "opus-4.8" in history["models"]
         assert "opus" not in history["models"]
         # The day entry should carry both providers + models sub-maps.
         day = history["daily_history"][0]
@@ -648,7 +651,7 @@ class TestPersistTokenRecord:
         # the model dropdown safely.
         pm = history["provider_models"]
         assert sorted(pm["opencode"]) == ["claude-haiku-3", "claude-sonnet-4"]
-        assert pm["claude_code"] == ["opus-4.8-1m"]  # canonicalized for claude_code
+        assert pm["claude_code"] == ["opus-4.8"]  # canonicalized for claude_code
         # opus must NOT appear under opencode — that would be the bug.
         assert "opus" not in pm["opencode"]
 
@@ -657,7 +660,7 @@ class TestPersistTokenRecord:
         day_pm = day["provider_models"]
         assert day_pm["opencode"]["claude-sonnet-4"]["input"] == 100
         assert day_pm["opencode"]["claude-haiku-3"]["input"] == 30
-        assert day_pm["claude_code"]["opus-4.8-1m"]["input"] == 200
+        assert day_pm["claude_code"]["opus-4.8"]["input"] == 200
         # Invalid pair (opencode + opus) is absent from the cross-tab.
         assert "opus" not in day_pm["opencode"]
 

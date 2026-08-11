@@ -1344,6 +1344,19 @@ def _established_installation(data_home: Path) -> bool:
     return False
 
 
+def _provider_skips_kiro_probes() -> bool:
+    """True when the configured provider does not drive kiro-cli.
+
+    Fails toward PROBING: an unreadable config returns False, so a host whose
+    config cannot be loaded keeps today's behaviour.
+    """
+
+    from kiro_crew.config.loader import configured_provider_is_kiro
+
+    # None = config unreadable; this call site fails toward PROBING.
+    return configured_provider_is_kiro() is False
+
+
 class KiroPrerequisiteService:
     """Single-gateway coordinator for prerequisite probes and setup operations."""
 
@@ -1411,6 +1424,13 @@ class KiroPrerequisiteService:
         self._run = process_runner or _run_process
         self._audit = audit_writer or _write_audit
         self._clock = clock or time.monotonic
+        # A non-kiro backend has no kiro-cli to probe. The binary may be absent
+        # entirely, so `--version` / `whoami` can never pass and the first-run
+        # dashboard gate would block forever. Treat it exactly like the
+        # test-mode bypass: latch ready, spawn nothing.
+        if not assume_ready and _provider_skips_kiro_probes():
+            logger.info("Provider is not kiro-backed; skipping kiro-cli readiness probes")
+            assume_ready = True
         self._assume_ready = assume_ready
         # `assume_ready` must hold from CONSTRUCTION, not from the first probe:
         # readiness is now a latch that `session_ready()` reads without probing,

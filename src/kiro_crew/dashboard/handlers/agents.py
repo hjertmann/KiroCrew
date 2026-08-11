@@ -25,6 +25,7 @@ from kiro_crew.agent_discovery import (
     spec_str,
 )
 from kiro_crew.config.loader import (
+    PROVIDER_CLAUDE_CODE,
     ConfigReadError,
     KiroCrewAgentConfig,
     KiroCrewConfig,
@@ -692,6 +693,11 @@ def _advertised_cc_models(request: web.Request) -> list[dict]:
     A provider id with no registry entry passes through unchanged (forward-compat
     for models the registry doesn't list yet). Returns ``[]`` when no session has
     initialized or the backend advertised nothing.
+
+    The backend's own ``default`` row is renamed to Kiro Crew's ``auto`` sentinel
+    rather than passed through: ``auto`` means "send no model at all", and letting
+    the literal string ``default`` become the stored slot value would persist a
+    wire token where every other code path expects the sentinel.
     """
     try:
         state: DashboardState = request.app["state"]
@@ -707,17 +713,22 @@ def _advertised_cc_models(request: web.Request) -> list[dict]:
         except Exception:
             continue
         if advertised:
-            return [
-                {
-                    "model_name": model_registry.from_provider_id(
-                        m.get("modelId", ""), "claude_code"
-                    ),
-                    "display_name": m.get("name", "") or m.get("modelId", ""),
-                    "description": m.get("description", ""),
-                }
-                for m in advertised
-                if m.get("modelId")
-            ]
+            rows = []
+            for m in advertised:
+                model_id = m.get("modelId", "")
+                if not model_id:
+                    continue
+                canonical = model_registry.from_provider_id(model_id, "claude_code")
+                if _normalize_model_key(canonical) == "auto":
+                    canonical = "auto"
+                rows.append(
+                    {
+                        "model_name": canonical,
+                        "display_name": m.get("name", "") or model_id,
+                        "description": m.get("description", ""),
+                    }
+                )
+            return rows
     return []
 
 
@@ -806,9 +817,15 @@ def _cc_models(request: web.Request, configured_default: str = "") -> list[dict]
     used to be offered the full flagship list and only discovered the truth when a
     prompt failed.
 
-    So when anything is advertised, registry rows are FILTERED DOWN to it (keeping
-    the registry's cleaner display names for the survivors), and advertised models
-    the registry does not list are appended for forward-compat.
+    So when anything is advertised, registry rows are FILTERED DOWN to it, and
+    advertised models the registry does not list are appended for forward-compat.
+
+    Advertised rows also WIN the display name and description. The backend names a
+    tier (``sonnet``, ``opus``) and reports which version it currently resolves to
+    ("Sonnet 5 · Efficient for routine tasks"); a static catalog cannot know that
+    and would label a Sonnet 5 session with whatever version it was written
+    against. The registry keeps the canonical key (so stored slot values and window
+    lookups are unaffected) and loses only the label.
 
     When NOTHING is advertised the registry is shown unfiltered. That is not a
     fallback to the old behaviour by preference -- an empty advertised set means
@@ -842,7 +859,7 @@ def _cc_models(request: web.Request, configured_default: str = "") -> list[dict]
 
     merged: list[dict] = []
     seen: set[str] = set()
-    for entry in (*registry_rows, *advertised):
+    for entry in (*advertised, *registry_rows):
         name = entry.get("model_name", "")
         key = _normalize_model_key(name)
         if not key or key in seen:
@@ -925,7 +942,30 @@ def _wrap_list_models_argv(argv: list[str]) -> tuple[list[str], str | None]:
 
 
 async def api_models(request: web.Request) -> web.Response:
-    """GET /api/models — list available models from the live kiro-cli ACP session."""
+    """GET /api/models — list the models the ACTIVE provider can serve.
+
+    Two backends, two catalogs. claude_code is answered from :func:`_cc_models`
+    (registry rows for the ``claude_code`` namespace, filtered down to what the
+    live adapter advertised); kiro-cli is answered by spawning ``--list-models``.
+    """
+    # claude-agent-acp advertises its models over ACP at session/new, so there is
+    # no CLI to spawn and nothing for the readiness gate below to protect. The
+    # kiro binary may not even be installed on this host.
+    # This handler never loaded config before, so an unreadable one used to reach
+    # the same graceful 503 every other degraded path here returns. 503 (not the
+    # 500 the write paths above use): the frontend polls this route every 8s while
+    # the list is degraded, and 503 is the shape it already retries on rather than
+    # caching. Unguarded, a broken config 500s on that loop and buries the
+    # actionable `config_unreadable` code under tracebacks.
+    try:
+        _cfg = KiroCrewConfig.load()
+    except ConfigReadError:
+        logger.exception("api_models: config unreadable; reporting degraded")
+        return web.json_response(
+            {"error": "failed to read config file", "code": "config_unreadable"}, status=503
+        )
+    if _cfg.agent.provider == PROVIDER_CLAUDE_CODE:
+        return web.json_response(_cc_models(request, _cfg.agent.model))
     # Signed-out gateways must never reach the spawn below. kiro-cli auto-opens
     # an interactive browser login for ANY subcommand run unauthenticated
     # (--no-interactive does not suppress it, and there is no opt-out env var),

@@ -134,6 +134,12 @@ interface RawPlugin {
 /** Raw model entry from /api/models. */
 interface RawModel {
   model_name: string
+  /** Backend-reported label for the row. On the claude_code path the gateway lets
+   *  the live adapter's label win over the registry's (handlers/agents.py
+   *  `_cc_models`), so this is the only field that names the version a tier
+   *  currently resolves to. Optional: the kiro path and a cold registry fallback
+   *  may omit it, and then `model_name` is all a picker can show. */
+  display_name?: string
   description?: string
   /** Backend-resolved context window. Two spellings because the endpoint has two
    *  branches: the kiro path returns `kiro-cli --list-models` rows verbatim
@@ -355,6 +361,9 @@ export class AcpAdapter implements ProviderAdapter {
         learnWindow(m.model_name, reported)
         return {
           name: m.model_name,
+          // `name` stays the canonical key (it is the stored/wire value); the
+          // label only changes what a picker renders.
+          label: m.display_name || undefined,
           description: m.description || '',
           contextWindow: reported || MODEL_TOKENS[m.model_name] || DEFAULT_CONTEXT,
           rateMultiplier: rowMultiplier(m),

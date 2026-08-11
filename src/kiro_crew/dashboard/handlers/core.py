@@ -1378,7 +1378,7 @@ _MOVED_CONFIG_FIELDS: dict[str, str] = {
 
 
 _EDITABLE_CONFIG: dict[str, dict] = {
-    "agent.provider": {"type": "enum", "values": ["acp"]},
+    "agent.provider": {"type": "enum", "values": ["acp", "claude_code"]},
     # Default model for new sessions. Membership can NOT be validated against a
     # fixed list: the real vocabulary is whatever the live kiro-cli advertises
     # (/api/models spawns it to find out), and it spans both canonical registry

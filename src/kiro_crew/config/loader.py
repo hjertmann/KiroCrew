@@ -200,10 +200,57 @@ _CREDENTIAL_KEYS = (
 )
 
 DEFAULT_MODEL = "auto"
+# The two ACP backends. ``acp`` spawns kiro-cli; ``claude_code`` spawns
+# claude-agent-acp via the ACP_BACKEND_CLAUDE branch in acp/client.py.
+PROVIDER_ACP = "acp"
+PROVIDER_CLAUDE_CODE = "claude_code"
 DEFAULT_SESSION_TIMEOUT = 3600  # 60 min
 DEFAULT_MAX_PARALLEL_STEPS = (
     0  # 0 = auto: derive from agent.subagent_auto_max via compute_max_subagents
 )
+
+
+def _mcp_gateway_params(
+    gw: "McpGatewayConfig",
+) -> tuple[str | None, str | None, str | None]:
+    """``(overlay, socket, settings_mcp_json)`` for a provider factory, or all
+    ``None`` when the shared MCP gateway is disabled (the provider then falls
+    through to per-session MCP).
+
+    Shared by both ACP provider factories: the wiring is identical on either
+    backend, and duplicating it is how the two drift.
+    """
+    if not gw.enabled:
+        return None, None, None
+    overlay = gw.overlay_dir or str(default_overlay_dir())
+    socket = gw.socket_path or str(default_socket_path())
+    settings = str(Path(overlay).parent / "settings" / "mcp.json")
+    return overlay, socket, settings
+
+
+def configured_provider_is_kiro() -> bool | None:
+    """Whether ``agent.provider`` drives kiro-cli — ``None`` when unknowable.
+
+    One place that knows how to answer the question, because three call sites
+    need it with THREE different fail-safes and a duplicated load-and-compare
+    would let them drift:
+
+    - ``dashboard/kiro_readiness`` fails toward GATING (treats ``None`` as kiro),
+      so an unreadable config keeps the gate closed.
+    - ``kiro_prerequisite`` fails toward PROBING (also ``None`` → kiro), so a
+      host whose config cannot be read keeps today's spawn behaviour.
+    - ``session._configured_acp_backend`` fails toward the kiro-cli runtime.
+
+    Returning ``None`` rather than a bool keeps that choice at the call site
+    instead of burying one polarity here. ``load()`` is cache-backed (two
+    ``stat()`` calls on a hit), so callers on a request path need no extra
+    memoization.
+    """
+    try:
+        return KiroCrewConfig.load().agent.provider != PROVIDER_CLAUDE_CODE
+    except Exception:  # unreadable/corrupt config — the caller decides
+        logger.debug("could not read agent.provider", exc_info=True)
+        return None
 
 
 def normalize_agent_model(model: object) -> str:
@@ -842,7 +889,11 @@ class AgentConfig:
     )
     provider: str = field(
         default="acp",
-        metadata=_meta("Provider", "LLM provider backend (KiroACP / kiro-cli).", enum=["acp"]),
+        metadata=_meta(
+            "Provider",
+            "LLM provider backend: 'acp' (kiro-cli) or 'claude_code' (claude-agent-acp).",
+            enum=[PROVIDER_ACP, PROVIDER_CLAUDE_CODE],
+        ),
     )
     default_agent: str = field(
         default="",
@@ -5847,10 +5898,13 @@ class KiroCrewConfig:
     def create_provider_factory(self) -> Callable:
         """Return a factory that creates LLMProvider instances from config.
 
-        KiroCrew is KiroACP-only: the sole provider is the ACP adapter driving
-        the kiro-cli backend. The factory accepts an optional ``session_key`` to
+        Two ACP backends share one adapter: ``acp`` drives kiro-cli, and
+        ``claude_code`` drives claude-agent-acp through the ``ACP_BACKEND_CLAUDE``
+        seam in ``acp/client.py``. Both accept an optional ``session_key`` to
         create a per-session subdirectory under ``workspace_root()``.
         """
+        if self.agent.provider == PROVIDER_CLAUDE_CODE:
+            return self._create_claude_code_factory()
         from kiro_crew.providers.acp import (
             AcpProvider,  # circular: acp -> client -> session -> config.loader
         )
@@ -5869,15 +5923,7 @@ class KiroCrewConfig:
 
         # MCP gateway: resolve overlay + socket once when enabled. None when
         # the feature flag is off -> AcpClient falls through to per-session MCP.
-        _gw = self.mcp_gateway
-        if _gw.enabled:
-            _gw_overlay = _gw.overlay_dir or str(default_overlay_dir())
-            _gw_socket = _gw.socket_path or str(default_socket_path())
-            _gw_settings = str(Path(_gw_overlay).parent / "settings" / "mcp.json")
-        else:
-            _gw_overlay = None
-            _gw_socket = None
-            _gw_settings = None
+        _gw_overlay, _gw_socket, _gw_settings = _mcp_gateway_params(self.mcp_gateway)
 
         def _acp(
             session_key: str | None = None,
@@ -5959,6 +6005,87 @@ class KiroCrewConfig:
             )
 
         return _acp
+
+    def _create_claude_code_factory(self) -> Callable:
+        """Return a factory bound to the ``claude-agent-acp`` ACP backend.
+
+        The mirror of the ``_acp`` closure above, with three deliberate
+        differences — everything else (work dir, agent-pinned model resolution,
+        role-aware effort, MCP gateway wiring) is identical, so the two backends
+        cannot silently diverge:
+
+        1. ``acp_backend=ACP_BACKEND_CLAUDE``, so ``AcpClient`` resolves and
+           spawns claude-agent-acp (``_resolve_claude_acp_bin``), sends the
+           integer ``protocolVersion``, reads ``optionId``/``name`` permission
+           options, uses ``session/set_config_option`` for model and effort, and
+           writes the per-session ``.claude/settings.local.json`` with
+           ``defaultMode: default`` so every tool decision still routes back
+           through Kiro Crew's hooks.
+        2. ``to_provider_id(m, "claude_code")`` instead of ``to_acp_id``: the
+           adapter accepts only its own advertised ids, and models it does not
+           serve (Haiku, Sonnet 4/4.5, a distinct Opus 4.6) must be FOLDED onto
+           the nearest real one rather than passed through — the opposite of the
+           kiro path, where each of those is a distinct real model.
+        3. ``tool_search=None``: MCP Tool Search is a kiro-cli workspace-overlay
+           feature, so the overlay is left untouched.
+        """
+        from kiro_crew.acp.types import ACP_BACKEND_CLAUDE
+        from kiro_crew.providers.acp import (
+            AcpProvider,  # circular: acp -> client -> session -> config.loader
+        )
+
+        model = self.agent.model
+        if model == DEFAULT_MODEL:
+            model = self._resolve_agent_model()
+
+        sandbox = self.agent.sandbox
+        default_effort = self.agent.reasoning_effort
+
+        _gw_overlay, _gw_socket, _gw_settings = _mcp_gateway_params(self.mcp_gateway)
+
+        def _claude_code(
+            session_key: str | None = None,
+            agent: str | None = None,
+            channel_id: str | None = None,
+            model_override: str | None = None,
+            cwd: str | None = None,
+            extra_env: dict[str, str] | None = None,
+            reasoning_effort_override: str | None = None,
+            **_kwargs: object,
+        ) -> AcpProvider:
+            wdir = Path(cwd) if cwd else _session_work_dir(session_key)
+            if model_override:
+                m = model_override
+            elif not agent or agent == "kirocrew":
+                m = model
+            else:
+                m = self._resolve_named_agent_model(agent) or model
+            m = model_registry.to_provider_id(m, PROVIDER_CLAUDE_CODE) if m else m
+            _eff_per_model: dict[str, str] = {}
+            if agent in ("kirocrew-lite", "kirocrew-heartbeat"):
+                base_effort = self.agent.resolve_effort("background")
+            else:
+                base_effort = default_effort
+            _eff = reasoning_effort_override or base_effort
+            if m and _eff and is_valid_effort(_eff) and model_supports_effort(m):
+                _eff_per_model[m] = _eff
+            return AcpProvider(
+                work_dir=wdir,
+                model=m,
+                agent=agent,
+                sandbox_mode=sandbox,
+                session_key=session_key,
+                channel_id=channel_id,
+                extra_env=extra_env,
+                acp_backend=ACP_BACKEND_CLAUDE,
+                effort_per_model=_eff_per_model,
+                tool_search=None,
+                mcp_gateway_overlay=_gw_overlay,
+                mcp_gateway_settings_mcp_json=_gw_settings,
+                mcp_gateway_socket=_gw_socket,
+            )
+
+        return _claude_code
 
 
 def build_provider_factory(cfg: "KiroCrewConfig") -> Callable:

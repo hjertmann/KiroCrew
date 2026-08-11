@@ -9909,7 +9909,13 @@
         "which_model_new_sessions_start_with_pick_a_model": "С какой моделью начинаются новые сессии, если их агент не закрепил свою. Задай модель для каждого агента в «Возможности агента → Crews» или выбери модель внутри сессии, чтобы переопределить её там.",
         "which_part_of_a_subagent_s_stream_to_keep_when_i": "Какую часть потока субагента сохранять при вставке события завершения в родительскую сессию. «Начало» сохраняет начало (по умолчанию, как в прежнем поведении). «Хвост» сохраняет итоговую сводку. «Оба» сохраняет по фрагменту с каждого конца с маркером между ними.",
         "widget_density": "Плотность виджетов",
-        "your_role": "Ваша роль"
+        "your_role": "Ваша роль",
+        "backend": "Backend",
+        "backend_claude_code": "Claude Code",
+        "backend_kiro_cli": "Kiro CLI",
+        "changing_this_clears_each_slot_s_model_because_m": "Changing this clears each slot's model, because model ids are provider-specific. Existing sessions keep the backend they started on.",
+        "failed_to_save_backend_provider": "Failed to save backend provider",
+        "which_agent_cli_a_session_drives_kiro_cli_is_the": "Which agent CLI a session drives. Kiro CLI is the default; Claude Code runs claude-agent-acp instead."
       },
       "computerUsePanel": {
         "accessibility": "Универсальный доступ",

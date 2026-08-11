@@ -50,6 +50,11 @@ METHOD_SESSION_LOAD = "session/load"
 # grows without bound as sessions accumulate. Handler: acp_agent.rs -> Session
 # ManagerRequestData::TerminateSession (self.sessions.remove + handle.shutdown).
 METHOD_SESSION_TERMINATE = "_kiro.dev/session/terminate"
+# claude-agent-acp has no `_kiro.dev` namespace; it advertises the spec's
+# `session/close` under `sessionCapabilities.close`. Same purpose: evict ONE
+# session from the multiplexed process so its transcript, context and MCP
+# children are reclaimed while sibling sessions live on.
+METHOD_SESSION_CLOSE = "session/close"
 METHOD_COMPACTION_STATUS = "_kiro.dev/compaction/status"
 METHOD_CLEAR_STATUS = "_kiro.dev/clear/status"
 METHOD_AGENT_SWITCHED = "_kiro.dev/agent/switched"

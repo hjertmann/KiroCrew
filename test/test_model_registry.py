@@ -7,10 +7,7 @@ from kiro_crew import model_registry as mr
 
 class TestModelRegistry:
     def test_to_provider_id_canonical_key(self):
-        assert (
-            mr.to_provider_id("opus-4.8-1m", "claude_code")
-            == "global.anthropic.claude-opus-4-8[1m]"
-        )
+        assert mr.to_provider_id("opus-4.8-1m", "claude_code") == "opus[1m]"
 
     def test_is_canonical_key_true_for_top_level_keys(self):
         # Top-level registry keys — the display-only ids the /api/models
@@ -31,7 +28,7 @@ class TestModelRegistry:
 
     def test_to_provider_id_identity_passthrough_for_provider_id(self):
         # An already-resolved provider id passes through unchanged (back-compat).
-        pid = "global.anthropic.claude-opus-4-8[1m]"
+        pid = "opus[1m]"
         assert mr.to_provider_id(pid, "claude_code") == pid
 
     def test_to_provider_id_unknown_passes_through_unchanged(self):
@@ -57,9 +54,7 @@ class TestModelRegistry:
         assert canonical == mr._FALLBACK_CANONICAL  # the bare key
         # The fallback key must translate to the paired VALID provider id.
         assert mr.to_provider_id(canonical, "claude_code") == mr._FALLBACK_PROVIDER_ID
-        assert mr.to_provider_id(canonical, "claude_code") == (
-            "global.anthropic.claude-opus-4-8[1m]"
-        )
+        assert mr.to_provider_id(canonical, "claude_code") == "opus[1m]"
 
     def test_from_provider_id_empty_returns_empty_not_auto(self):
         # Empty means "no model", NOT the 'auto' canonical key.
@@ -178,59 +173,44 @@ class TestModelRegistry:
     def test_kiro_dotted_aliases_resolve(self):
         # AIM-managed agents ship kiro dotted ids; they must map deterministically
         # (NOT fall back to the flagship), preserving e.g. agent-lite on sonnet.
-        assert (
-            mr.to_provider_id("claude-sonnet-4.6", "claude_code")
-            == "global.anthropic.claude-sonnet-4-6[1m]"
-        )
-        assert (
-            mr.to_provider_id("claude-opus-4.7", "claude_code")
-            == "global.anthropic.claude-opus-4-7[1m]"
-        )
-        # Opus 4.6 has no Bedrock profile; alias collapses to the current flagship.
-        assert (
-            mr.to_provider_id("claude-opus-4.6", "claude_code")
-            == "global.anthropic.claude-opus-4-8[1m]"
-        )
-        # bare 'opus'/'sonnet' aliases
-        assert mr.to_provider_id("opus", "claude_code") == "global.anthropic.claude-opus-4-8[1m]"
-        assert (
-            mr.to_provider_id("sonnet", "claude_code") == "global.anthropic.claude-sonnet-4-6[1m]"
-        )
+        assert mr.to_provider_id("claude-sonnet-4.6", "claude_code") == "sonnet"
+        # Opus 4.7 has no tier spelling, so it resolves to "" (backend picks)
+        # rather than being relabelled as 4.8.
+        assert mr.to_provider_id("claude-opus-4.7", "claude_code") == ""
+        # Opus 4.6 has no tier of its own; alias collapses to the current flagship.
+        assert mr.to_provider_id("claude-opus-4.6", "claude_code") == "opus[1m]"
+        # bare 'opus'/'sonnet' aliases. 'opus' is also the 200K entry's wire
+        # value, and a provider id outranks an alias in the index.
+        assert mr.to_provider_id("opus", "claude_code") == "opus"
+        assert mr.to_provider_id("sonnet", "claude_code") == "sonnet"
 
     def test_legacy_dotted_ids_do_not_regress_to_flagship(self):
         # Models the OLD _CC_MODEL_ALIASES mapped to cheaper classes must NOT
         # silently resolve to the flagship Opus 4.8 1M (a cost regression).
-        flagship = "global.anthropic.claude-opus-4-8[1m]"
-        sonnet = "global.anthropic.claude-sonnet-4-6[1m]"
-        # Sonnet/Haiku-class ids route to Sonnet (cheapest available), not Opus.
-        for sid in (
-            "claude-sonnet-4.5",
-            "claude-sonnet-4.5-1m",
-            "claude-sonnet-4",
-            "claude-haiku-4.5",
-        ):
-            assert mr.to_provider_id(sid, "claude_code") == sonnet, sid
+        flagship = "opus[1m]"
+        # Sonnet-class ids route to Sonnet, not Opus.
+        for sid in ("claude-sonnet-4.5", "claude-sonnet-4.5-1m", "claude-sonnet-4"):
+            assert mr.to_provider_id(sid, "claude_code") == "sonnet", sid
+        # Haiku is its own tier on this backend, so a Haiku pin stays Haiku
+        # instead of folding up to Sonnet.
+        assert mr.to_provider_id("claude-haiku-4.5", "claude_code") == "haiku"
         # Opus 4.5 routes to the 200K Opus, not the 1M flagship.
-        assert (
-            mr.to_provider_id("claude-opus-4.5", "claude_code")
-            == "global.anthropic.claude-opus-4-8"
-        )
+        assert mr.to_provider_id("claude-opus-4.5", "claude_code") == "opus"
         # The -1m form of 4.6 no longer downgrades to 4.7; it maps to the flagship.
         assert mr.to_provider_id("claude-opus-4.6-1m", "claude_code") == flagship
 
     def test_fable_5_canonical_round_trip(self):
         # Fable 5 entry: canonical -> provider id -> canonical.
-        assert (
-            mr.to_provider_id("fable-5-1m", "claude_code")
-            == "global.anthropic.claude-fable-5[1m]"
-        )
+        assert mr.to_provider_id("fable-5-1m", "claude_code") == "claude-fable-5[1m]"
+        assert mr.from_provider_id("claude-fable-5[1m]", "claude_code") == "fable-5-1m"
+        # The Bedrock-style spelling an internal companion uses still folds home.
         assert (
             mr.from_provider_id("global.anthropic.claude-fable-5[1m]", "claude_code")
             == "fable-5-1m"
         )
 
     def test_fable_5_aliases_resolve(self):
-        expected = "global.anthropic.claude-fable-5[1m]"
+        expected = "claude-fable-5[1m]"
         assert mr.to_provider_id("fable", "claude_code") == expected
         assert mr.to_provider_id("fable-5", "claude_code") == expected
         assert mr.to_provider_id("claude-fable-5", "claude_code") == expected
@@ -243,7 +223,7 @@ class TestModelRegistry:
 
     def test_fable_5_in_available_models(self):
         ids = mr.available_models("claude_code")
-        assert "global.anthropic.claude-fable-5[1m]" in ids
+        assert "claude-fable-5[1m]" in ids
 
     def test_bare_advertised_ids_fold_to_canonical_key(self):
         # claude-agent-acp advertises BARE ids (no "global.anthropic." prefix).
@@ -252,7 +232,28 @@ class TestModelRegistry:
         assert mr.from_provider_id("claude-opus-4-8[1m]", "claude_code") == "opus-4.8-1m"
         assert mr.from_provider_id("claude-opus-4-8", "claude_code") == "opus-4.8"
         assert mr.from_provider_id("claude-opus-4-7[1m]", "claude_code") == "opus-4.7-1m"
-        assert mr.from_provider_id("claude-sonnet-4-6[1m]", "claude_code") == "sonnet-4.6-1m"
+        assert mr.from_provider_id("opus[1m]", "claude_code") == "opus-4.8-1m"
+        # The 200K row owns the bare 'sonnet' tier, so the window reported for
+        # such a session is the 200K it actually gets.
+        assert mr.from_provider_id("sonnet", "claude_code") == "sonnet-4.5"
+        # Sonnet-class spellings fold onto the 200K row, which owns the tier.
+        assert mr.from_provider_id("claude-sonnet-4-6[1m]", "claude_code") == "sonnet-4.5"
+
+    def test_claude_tier_windows_match_what_the_tier_is_served_at(self):
+        """A tier without ``[1m]`` is a 200K session and must report 200K.
+
+        ``opus``/``sonnet`` are ALSO bare aliases of the 1M canonicals on the kiro
+        side, and _registry_window resolves acp-first — so both reported 1M, which
+        makes the context budget assemble a 1M prompt for a 200K session.
+        """
+        assert mr.model_window("opus") == 200_000
+        assert mr.model_window("sonnet") == 200_000
+        assert mr.model_window("haiku") == 200_000
+        assert mr.model_window("opus[1m]") == 1_000_000
+        assert mr.model_window("claude-fable-5[1m]") == 1_000_000
+        # The kiro path keeps its own meaning for the same two strings.
+        assert mr.to_provider_id("opus", "acp") == "claude-opus-4.8"
+        assert mr.to_provider_id("sonnet", "acp") == "claude-sonnet-4.6"
 
     def test_fable_5_not_default(self):
         # Fable 5 is opt-in; Opus 4.8 stays default.
@@ -263,7 +264,7 @@ class TestModelRegistry:
         # 'auto' path settings.local.json omits the model key and the
         # claude-agent-acp adapter picks availableModels[0]. Adding Fable as the
         # first JSON entry must NOT make Auto sessions resolve to Fable.
-        assert mr.available_models("claude_code")[0] == "global.anthropic.claude-opus-4-8[1m]"
+        assert mr.available_models("claude_code")[0] == "opus[1m]"
 
     def test_auto_passes_through_empty(self):
         assert mr.to_provider_id("auto", "claude_code") == ""
@@ -277,8 +278,8 @@ class TestModelRegistry:
 
     def test_available_models_returns_provider_ids(self):
         ids = mr.available_models("claude_code")
-        assert "global.anthropic.claude-opus-4-8[1m]" in ids
-        assert "global.anthropic.claude-sonnet-4-6[1m]" in ids
+        assert "opus[1m]" in ids
+        assert "sonnet" in ids
         # 'auto' maps to "" and is excluded from the allowlist.
         assert "" not in ids
 
@@ -286,10 +287,7 @@ class TestModelRegistry:
         assert mr.default("claude_code") == "opus-4.8-1m"
 
     def test_from_provider_id_reverse_lookup(self):
-        assert (
-            mr.from_provider_id("global.anthropic.claude-opus-4-8[1m]", "claude_code")
-            == "opus-4.8-1m"
-        )
+        assert mr.from_provider_id("opus[1m]", "claude_code") == "opus-4.8-1m"
 
     def test_display_list_shape(self):
         rows = mr.display_list("claude_code")
@@ -350,12 +348,12 @@ class TestAcpProviderIds:
         assert mr.to_acp_id("claude-sonnet-4.5") == "claude-sonnet-4.5"
         assert mr.to_acp_id("claude-sonnet-4") == "claude-sonnet-4"
         assert mr.to_acp_id("claude-opus-4.6") == "claude-opus-4.6"
-        # Contrast: to_provider_id DOES downgrade them on the claude_code path
-        # (the claude backend has no Haiku), which is why the acp path needs its
-        # own alias-blind translator.
-        assert mr.to_provider_id("claude-haiku-4.5", "claude_code") == (
-            "global.anthropic.claude-sonnet-4-6[1m]"
-        )
+        # Contrast: to_provider_id DOES downgrade the Sonnet-class aliases on the
+        # claude_code path, which is why the acp path needs its own alias-blind
+        # translator. Haiku is exempt — that backend has a 'haiku' tier, so the
+        # pin survives on both.
+        assert mr.to_provider_id("claude-sonnet-4.5", "claude_code") == "sonnet"
+        assert mr.to_provider_id("claude-haiku-4.5", "claude_code") == "haiku"
 
     def test_kiro_id_folds_to_canonical_key(self):
         # Reverse: the bare kiro id resolves back to the canonical key (used by
@@ -372,9 +370,9 @@ class TestAcpProviderIds:
         # index still folds them for claude-agent-acp dropdown dedup/downgrade.
         cases = {
             # kiro id            acp canonical    window   cc fold (downgrade)
-            "claude-haiku-4.5":  ("haiku-4.5",    200_000, "sonnet-4.6-1m"),
-            "claude-sonnet-4.5": ("sonnet-4.5",   200_000, "sonnet-4.6-1m"),
-            "claude-sonnet-4":   ("sonnet-4",     200_000, "sonnet-4.6-1m"),
+            "claude-haiku-4.5":  ("haiku-4.5",    200_000, "haiku-4.5"),
+            "claude-sonnet-4.5": ("sonnet-4.5",   200_000, "sonnet-4.5"),
+            "claude-sonnet-4":   ("sonnet-4",     200_000, "sonnet-4.5"),
             "claude-opus-4.6":   ("opus-4.6-1m", 1_000_000, "opus-4.8-1m"),
         }
         for kiro_id, (acp_canon, win, cc_canon) in cases.items():
@@ -387,6 +385,44 @@ class TestAcpProviderIds:
             # Round-trip: the acp canonical translates back to the kiro id, so a
             # picked model actually RUNS on kiro (not the folded flagship).
             assert mr.to_acp_id(acp_canon) == kiro_id, acp_canon
+
+    def test_every_sonnet_spelling_keeps_its_window_on_acp(self):
+        # REGRESSION: the claude_code fold for a "4.6" pin was added to the 200K
+        # sonnet-4.5 row's SHARED aliases, which re-pointed the 1M spellings on
+        # the acp index too (aliases setdefault, and sonnet-4.5 is declared
+        # first) — kiro's 1M Sonnet silently reported 200K, so context assembly
+        # truncated at a fifth of the real window. Only the DOTTED spelling was
+        # pinned before, which is why it passed. The fold now lives under
+        # provider_aliases.claude_code, so pin EVERY spelling on BOTH backends.
+        for spelling in (
+            "claude-sonnet-4.6",
+            "claude-sonnet-4.6-1m",
+            "claude-sonnet-4-6[1m]",
+            "global.anthropic.claude-sonnet-4-6[1m]",
+        ):
+            assert mr.from_provider_id(spelling, "acp") == "sonnet-4.6-1m", spelling
+            assert mr.model_window(mr.from_provider_id(spelling, "acp")) == 1_000_000, spelling
+            # claude_code still folds to the cheap 200K tier: '' there would mean
+            # "let the org default decide", which can be Opus — a cost surprise
+            # for someone who explicitly asked for Sonnet.
+            cc = mr.from_provider_id(spelling, "claude_code")
+            assert mr.to_provider_id(cc, "claude_code") == "sonnet", spelling
+
+    def test_one_row_per_non_empty_provider_id(self):
+        # The registry's own "SOLE claimer" rule, enforced rather than documented:
+        # _build_indices ASSIGNS provider ids (aliases only setdefault), so two
+        # rows claiming one wire value makes declaration order pick a silent
+        # winner — the exact mechanism behind the 1M-Sonnet regression above.
+        for provider in ("acp", "claude_code"):
+            claimed: dict[str, str] = {}
+            for key, entry in mr._REGISTRY.items():
+                pid = (entry.get("providers") or {}).get(provider)
+                if not isinstance(pid, str) or not pid:
+                    continue
+                assert pid not in claimed, (
+                    f"{provider} id {pid!r} claimed by both {claimed.get(pid)!r} and {key!r}"
+                )
+                claimed[pid] = key
 
     def test_distinct_models_are_selectable_rows(self):
         # All four distinct models appear as their own acp dropdown rows (not
@@ -413,30 +449,27 @@ class TestCorruptRegistryFallback:
         # to the SAME provider id in the hardcoded fallback table, so the
         # corrupt-registry path (empty index) rescues any persisted cc_model to a
         # valid provider id instead of leaking a bare canonical key to Bedrock.
+        # Compared against what the LIVE index resolves, not against each owning
+        # entry's own pid: a tier name can appear as one row's provider id and
+        # another row's alias (bare 'sonnet'), and the flat fallback map can only
+        # hold the one value the live lookup would return anyway.
         for canonical, entry in mr._REGISTRY.items():
-            pid = entry.get("providers", {}).get("claude_code")
-            if pid is None:
+            if entry.get("providers", {}).get("claude_code") is None:
                 continue
-            keys = [canonical, *entry.get("aliases", [])]
-            for k in keys:
+            for k in (canonical, *entry.get("aliases", [])):
                 assert k in mr._FALLBACK_PROVIDER_IDS, (
                     f"{k!r} missing from _FALLBACK_PROVIDER_IDS (corrupt-registry "
-                    f"rescue would leak the bare key to Bedrock)"
+                    f"rescue would leak the bare key to the adapter)"
                 )
-                assert mr._FALLBACK_PROVIDER_IDS[k] == pid, (
+                live = mr.to_provider_id(k, "claude_code")
+                assert mr._FALLBACK_PROVIDER_IDS[k] == live, (
                     f"_FALLBACK_PROVIDER_IDS[{k!r}] drifted from the registry "
-                    f"({mr._FALLBACK_PROVIDER_IDS[k]!r} != {pid!r})"
+                    f"({mr._FALLBACK_PROVIDER_IDS[k]!r} != {live!r})"
                 )
 
     def test_fallback_rescues_non_default_key_when_index_empty(self, monkeypatch):
         # Simulate a corrupt/missing registry: empty index. to_provider_id must
         # still rescue a NON-default canonical key (not just the flagship).
         monkeypatch.setattr(mr, "_CANONICAL_INDEX", {})
-        assert (
-            mr.to_provider_id("sonnet-4.6-1m", "claude_code")
-            == "global.anthropic.claude-sonnet-4-6[1m]"
-        )
-        assert (
-            mr.to_provider_id("opus-4.8-1m", "claude_code")
-            == "global.anthropic.claude-opus-4-8[1m]"
-        )
+        assert mr.to_provider_id("sonnet-4.5", "claude_code") == "sonnet"
+        assert mr.to_provider_id("opus-4.8-1m", "claude_code") == "opus[1m]"

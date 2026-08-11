@@ -450,6 +450,41 @@ that demuxes frames by `params.sessionId` into per-session queues (no
 **`AcpSessionProvider`** adapts a handle to the `LLMProvider` interface so it is
 a drop-in replacement for `AcpClient`.
 
+**`AcpRuntime(acp_backend=...)` selects the backend**, mirroring `AcpClient`
+(see [Backend Selection](#backend-selection)). `""` (default) is `kiro-cli`, so
+every pre-existing caller is unchanged; `ACP_BACKEND_CLAUDE` spawns
+`claude-agent-acp`. Five things differ on the claude branch, all reusing
+`AcpClient`'s own resolvers rather than duplicating them:
+
+| | kiro-cli | claude-agent-acp |
+|---|---|---|
+| argv | `kiro-cli acp --agent <name> [--model X]` | `_resolve_claude_acp_bin()`; no `--agent`/`--model` (both are per-session) |
+| `initialize` | date-string `PROTOCOL_VERSION` | integer `PROTOCOL_VERSION_CLAUDE` |
+| `session/new` | plain params | `_meta.claudeCode` envelope (`claude_meta=True`) |
+| agent activation | `session/set_mode` (fail-closed) | skipped — its `modes` are *permission* modes, never agent names |
+| session eviction | `_kiro.dev/session/terminate` | `session/close` (`METHOD_SESSION_CLOSE`) |
+
+The env also carries `CLAUDE_CODE_EXECUTABLE` when unset, for the same reason as
+`AcpClient` (the Agent SDK does not search PATH), and `wrap_argv` receives
+`is_kiro_cli=False` so the sandbox does not take the kiro delegation branch.
+
+**Who passes it.** The kirocrew-lite **background** runtime reads
+`session._configured_acp_backend(cfg)` (derived from `agent.provider`), and the
+**companion subagent** runtime inherits the parent's via
+`_parent_runtime_kwargs`. Both previously hardcoded kiro-cli regardless of
+`agent.provider`, so on a `claude_code` gateway they spawned a CLI that may be
+absent or signed out — the runtime then died at handshake as
+`process exited (rc=None)`, silently killing the background session (chat
+titles, suggestions, tips, the model picker) and every subagent. Note this is
+independent of the readiness gate: scoping that gate to kiro-backed providers
+removed the *startup* block but not the *runtime* dependency.
+
+`AcpSessionHandle.store_session_config()` also ingests a `configOptions` model
+selector as the advertised catalog, because this backend sends `models: null`
+and publishes its models there — parity with
+`AcpClient._capture_models_from_config_option`. Without it the advertised set is
+empty and every consumer falls back to the static registry.
+
 Both transports share one parser — `acp/_dispatch.py`
 (`parse_session_update`, `build_permission_event`, `parse_usage_update`, …) — so
 they cannot drift. `AcpRuntime.load_session()` mirrors `AcpClient`'s resume

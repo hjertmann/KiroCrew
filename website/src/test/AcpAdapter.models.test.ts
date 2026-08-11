@@ -34,6 +34,26 @@ describe('AcpAdapter.fetchAvailableModels', () => {
     expect(models[2].description).toBe('Everyday tasks')
   })
 
+  it('carries the backend display_name as `label`, keeping `name` canonical', async () => {
+    // The claude_code path names a TIER and only the live backend knows which
+    // version it resolves to, so its label must survive to the picker while
+    // `name` stays the canonical key that is stored and sent on the wire.
+    ;(api.models as any).mockResolvedValue([
+      {
+        model_name: 'opus-4.8-1m',
+        display_name: 'Opus (1M context)',
+        description: 'Opus 5 with 1M context',
+      },
+      { model_name: 'sonnet-4.5', description: 'no label from this backend' },
+    ])
+    const models = await new AcpAdapter().fetchAvailableModels()
+    expect(models[0].name).toBe('opus-4.8-1m')
+    expect(models[0].label).toBe('Opus (1M context)')
+    // A backend that reports no label leaves it unset, so a picker falls back to
+    // `name` rather than rendering an empty string.
+    expect(models[1].label).toBeUndefined()
+  })
+
   it('falls back to AUTO-ONLY when API returns non-array (e.g. error object)', async () => {
     ;(api.models as any).mockResolvedValue({ error: 'Token required' })
     const models = await new AcpAdapter().fetchAvailableModels()

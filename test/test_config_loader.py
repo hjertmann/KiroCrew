@@ -50,7 +50,7 @@ logger = logging.getLogger("kiro_crew.config.loader")
 # Fields with enum constraints and their allowed values
 _ENUM_FIELDS: list[tuple[str, str, list[str]]] = [
     ("agent", "approval_mode", ["auto", "interactive"]),
-    ("agent", "provider", ["acp"]),
+    ("agent", "provider", ["acp", "claude_code"]),
     ("agent", "sandbox", ["auto", "off"]),
     ("agent", "log_level", ["DEBUG", "INFO", "WARNING", "ERROR"]),
     ("memory", "embedding_provider", ["llama_cpp"]),

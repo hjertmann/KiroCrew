@@ -114,6 +114,14 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "occurrence": 1
   },
   {
+    "id": "chat.backend",
+    "label": "Backend",
+    "description": "Which agent CLI a session drives. Kiro CLI is the default; Claude Code runs claude-agent-acp instead.",
+    "tab": "chat",
+    "type": "select",
+    "occurrence": 1
+  },
+  {
     "id": "chat.background-effort",
     "label": "Background Effort",
     "tab": "chat",

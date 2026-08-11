@@ -3665,7 +3665,7 @@ class TestTokenPersistenceBackfill:
 
         # This simulates a claude_code session, so the backfill must run under
         # provider=claude_code for canonicalize_for_provider to map 'opus' ->
-        # 'opus-4.8-1m'. The default test config is provider=acp, under which the
+        # 'opus-4.8'. The default test config is provider=acp, under which the
         # backfill (correctly) leaves a kiro/acp model unchanged — so force a CC
         # config here. _run_chat reads only cfg.agent.provider (+ dashboard.
         # merge_queued_messages) on this path, so a MagicMock cfg suffices.
@@ -3712,10 +3712,11 @@ class TestTokenPersistenceBackfill:
         slot_key, model, provider = captured[0]
         assert slot_key == "s1"
         # The backfill canonicalizes the provider's model via from_provider_id so
-        # it matches the canonical-keyed dropdown: 'opus' alias -> 'opus-4.8-1m'.
-        assert model == "opus-4.8-1m", "late backfill should populate canonical model"
+        # it matches the canonical-keyed dropdown: the claude backend's 'opus'
+        # wire value -> 'opus-4.8' (the 200K row; 'opus[1m]' is the 1M one).
+        assert model == "opus-4.8", "late backfill should populate canonical model"
         # slot.model should also be updated so subsequent turns reuse it
-        assert slot.model == "opus-4.8-1m"
+        assert slot.model == "opus-4.8"
 
     @pytest.mark.asyncio
     async def test_auto_sentinel_reaches_persistence_fallback(self, tmp_path, monkeypatch):

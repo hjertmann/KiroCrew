@@ -30,6 +30,12 @@ const RESTORE_OPTIONS = ['15', '30', '60', '120', '360', '720', '1440', '0']
 function restoreLabels(): string[] {
   return ['15m', '30m', '1h', '2h', '6h', '12h', '24h', i18nT('pages.settings.chatPanel.no_limit')]
 }
+// The two ACP backends (config enum: agent.provider).
+const PROVIDER_OPTIONS = ['acp', 'claude_code']
+function providerLabels(): string[] {
+  return [i18nT('pages.settings.chatPanel.backend_kiro_cli'), i18nT('pages.settings.chatPanel.backend_claude_code')]
+}
+
 const COMPACT_OPTIONS = ['20', '40', '60', '80', '90']
 const COMPACT_LABELS = ['20% (aggressive)', '40%', '60%', '80%', '90% (default)']
 
@@ -158,6 +164,7 @@ export function ChatPanel() {
     session?: { autocompact_pct?: number }
     agent?: {
       model?: string
+      provider?: string
       role_models?: { background?: string; subagent?: string }
       role_efforts?: { background?: string; subagent?: string }
       reasoning_effort?: string
@@ -304,6 +311,34 @@ export function ChatPanel() {
   // otherwise the select would silently jump to another entry and a stray
   // change event would overwrite the user's stored choice.
   if (!modelOptions.includes(defaultModel)) modelOptions.unshift(defaultModel)
+  // Label for one option value. 'auto' is Kiro Crew's own sentinel so it keeps the
+  // catalog string; everything else prefers the label the backend reported, which
+  // is the only source that names the version a tier resolves to today. Falls back
+  // to the canonical key for a row the live backend never advertised (a stale
+  // stored pick, or the cold registry list before any session has initialized).
+  const modelOptionLabel = (m: string): string =>
+    m === 'auto'
+      ? i18nT('pages.settings.chatPanel.default_auto')
+      : availableModels.find(x => x.name === m)?.label || m
+
+  // ── Provider (which ACP backend a session spawns) ──
+  // Switching it changes the model vocabulary, so the models query is
+  // invalidated too: /api/models answers from the ACTIVE provider's catalog
+  // (kiro-cli --list-models vs the claude_code registry), and a stale list would
+  // offer ids the new backend rejects. The server side of the switch — agent
+  // config rebuild, factory reload, per-slot model clear — is handled by the
+  // PATCH handler in dashboard/handlers/core.py.
+  const backendProvider = mcCfg?.agent?.provider ?? 'acp'
+  const backendProviderMut = useMutation({
+    mutationFn: (v: string) => api.patchConfig('agent.provider', v),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['kirocrewConfig'] })
+      // Prefix match on ['available-models', provider.id] — the catalog itself
+      // changed, so a refetch is required, not just a re-render.
+      qc.invalidateQueries({ queryKey: ['available-models'] })
+    },
+    onError: () => setSaveError(i18nT('pages.settings.chatPanel.failed_to_save_backend_provider')),
+  })
 
   const defaultModelMut = useMutation({
     mutationFn: (v: string) => api.patchConfig('agent.model', v),
@@ -335,8 +370,7 @@ export function ChatPanel() {
     if (!opts.includes(current)) opts.unshift(current)
     return opts
   }
-  const roleModelLabels = (opts: string[]): string[] =>
-    opts.map(m => (m === 'auto' ? i18nT('pages.settings.chatPanel.default_auto') : m))
+  const roleModelLabels = (opts: string[]): string[] => opts.map(modelOptionLabel)
   const backgroundModelMut = useMutation({
     mutationFn: (v: string) => api.patchConfig('agent.role_models.background', v),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['kirocrewConfig'] }),
@@ -405,6 +439,19 @@ export function ChatPanel() {
             Chat is the interactive default; Background and Sub-agents inherit it
             when left on Auto. */}
         <SettingsCard>
+          <SettingsSelect
+            label={i18nT('pages.settings.chatPanel.backend')}
+            description={i18nT('pages.settings.chatPanel.which_agent_cli_a_session_drives_kiro_cli_is_the')}
+            hint={i18nT('pages.settings.chatPanel.changing_this_clears_each_slot_s_model_because_m')}
+            value={backendProvider}
+            options={PROVIDER_OPTIONS}
+            optionLabels={providerLabels()}
+            onChange={v => backendProviderMut.mutate(v)}
+            disabled={!mcQ.isSuccess}
+          />
+        </SettingsCard>
+
+        <SettingsCard>
           <div className="text-[13px] font-semibold text-text-strong">{i18nT('pages.settings.chatPanel.role_chat')}</div>
           <SettingsSelect
             label={i18nT('pages.settings.chatPanel.default_model')}
@@ -412,7 +459,7 @@ export function ChatPanel() {
             hint={i18nT('pages.settings.chatPanel.default_defers_to_your_agent_config_and_then_to')}
             value={defaultModel}
             options={modelOptions}
-            optionLabels={modelOptions.map(m => (m === 'auto' ? i18nT('pages.settings.chatPanel.default_auto') : m))}
+            optionLabels={modelOptions.map(modelOptionLabel)}
             onChange={v => defaultModelMut.mutate(v)}
             disabled={!mcQ.isSuccess}
           />

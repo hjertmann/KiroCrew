@@ -70,6 +70,11 @@ except Exception:  # pragma: no cover - standalone / test fallback
     # up", and both call sites already degrade to their documented defaults.
     kiro_agents_dir = None  # type: ignore[assignment]
 
+try:  # which ACP backend to spawn — follows agent.provider, "" = kiro-cli
+    from kiro_crew.session import _configured_acp_backend
+except Exception:  # pragma: no cover - standalone / test fallback
+    _configured_acp_backend = None  # type: ignore[assignment]
+
 try:  # SEL audit — the runtime layer has no audit_source, so the pool emits its own
     from kiro_crew.sel import sel as _sel
 except Exception:  # pragma: no cover - standalone / test fallback
@@ -355,11 +360,25 @@ class _BatchRuntimeHolder:
         # OS sandbox scrubs credential paths/env for this LLM-directed subprocess
         # (GitHub fetch/post run via the `gh` CLI's own auth; the worker only
         # writes data/results and runs `python3 sage_lib/pipeline.py`).
-        rt = AcpRuntime(agent=self._agent, work_dir=self._work_dir, sandbox_mode="auto")
+        # Follow agent.provider. This pool builds its own runtime rather than
+        # inheriting one from a chat provider, so without this it spawned
+        # kiro-cli on a claude_code gateway — where that CLI may be absent or
+        # signed out, killing every review with `process exited (rc=None)`.
+        # "" (the AcpRuntime default) is kiro-cli, so the kiro path is unchanged.
+        _backend = ""
+        if _configured_acp_backend is not None:
+            try:
+                from kiro_crew.config.loader import KiroCrewConfig
+
+                _backend = _configured_acp_backend(KiroCrewConfig.load())
+            except Exception:
+                logger.debug("could not resolve ACP backend; using kiro-cli", exc_info=True)
+        rt = AcpRuntime(agent=self._agent, work_dir=self._work_dir,
+                        sandbox_mode="auto", acp_backend=_backend)
         await rt.spawn()
         self._runtime = rt
-        logger.info("code-review-sage runtime spawned (agent=%s, cwd=%s)",
-                    self._agent, self._work_dir)
+        logger.info("code-review-sage runtime spawned (agent=%s, backend=%s, cwd=%s)",
+                    self._agent, _backend or "kiro", self._work_dir)
         return rt
 
     async def _kill(self, rt: "AcpRuntime") -> None:

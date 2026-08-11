@@ -3315,7 +3315,10 @@
         "somewhat": "Somewhat",
         "tail_preserve_end_final_summary": "Tail (preserve end / final summary)",
         "ux_designer": "UX Designer",
-        "failed_to_save_knowledge_setting": "Failed to save knowledge setting"
+        "failed_to_save_knowledge_setting": "Failed to save knowledge setting",
+        "backend_claude_code": "Claude Code",
+        "backend_kiro_cli": "Kiro CLI",
+        "failed_to_save_backend_provider": "Failed to save backend provider"
       },
       "displayPanel": {
         "color": "Color {{n}}",

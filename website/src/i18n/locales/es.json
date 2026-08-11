@@ -9795,7 +9795,13 @@
         "which_model_new_sessions_start_with_pick_a_model": "Con qué modelo empiezan las sesiones nuevas cuando su agente no tiene uno propio. Define un modelo por agente en Capacidades → Crews, o elige uno dentro de una sesión para cambiarlo solo allí.",
         "which_part_of_a_subagent_s_stream_to_keep_when_i": "Qué parte del flujo de un subagente se conserva al inyectar su evento de finalización en la sesión principal. Inicio conserva el comienzo (predeterminado, igual que el comportamiento anterior). Cola conserva el resumen final. Ambos conserva un fragmento de cada extremo con un marcador entre ellos.",
         "widget_density": "Densidad de widgets",
-        "your_role": "Tu rol"
+        "your_role": "Tu rol",
+        "backend": "Backend",
+        "backend_claude_code": "Claude Code",
+        "backend_kiro_cli": "Kiro CLI",
+        "changing_this_clears_each_slot_s_model_because_m": "Changing this clears each slot's model, because model ids are provider-specific. Existing sessions keep the backend they started on.",
+        "failed_to_save_backend_provider": "Failed to save backend provider",
+        "which_agent_cli_a_session_drives_kiro_cli_is_the": "Which agent CLI a session drives. Kiro CLI is the default; Claude Code runs claude-agent-acp instead."
       },
       "computerUsePanel": {
         "accessibility": "Accesibilidad",

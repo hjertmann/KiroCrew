@@ -4648,3 +4648,64 @@ class TestAgentSpecRepair:
         for payload in (first_result, second_result):
             assert payload["missing_agent_specs"] == []
             assert payload["agent_spec_repair_error"] == ""
+
+
+class TestProviderFailSafePolarity:
+    """One shared resolver, three deliberately different fail-safes.
+
+    `configured_provider_is_kiro()` returns None when the config cannot be read,
+    so each call site picks its own safe interpretation. Those polarities are the
+    whole reason the check is not a single bool, and a refactor that "simplifies"
+    None away would silently open a gate or skip a probe — so pin all three.
+    """
+
+    @staticmethod
+    def _resolver(value):
+        return lambda: value
+
+    def test_readiness_gate_fails_toward_gating(self, monkeypatch):
+        from kiro_crew.config import loader as loader_mod
+        from kiro_crew.dashboard import kiro_readiness as mod
+
+        for provider_is_kiro, expected in ((True, True), (False, False), (None, True)):
+            monkeypatch.setattr(
+                loader_mod, "configured_provider_is_kiro", self._resolver(provider_is_kiro)
+            )
+            assert mod._kiro_backend_active() is expected, provider_is_kiro
+
+    def test_prerequisite_probe_fails_toward_probing(self, monkeypatch):
+        from kiro_crew import kiro_prerequisite as mod
+        from kiro_crew.config import loader as loader_mod
+
+        # None must NOT skip the probes: an unreadable config keeps today's spawn.
+        for provider_is_kiro, expected in ((True, False), (False, True), (None, False)):
+            monkeypatch.setattr(
+                loader_mod, "configured_provider_is_kiro", self._resolver(provider_is_kiro)
+            )
+            assert mod._provider_skips_kiro_probes() is expected, provider_is_kiro
+
+    def test_runtime_backend_fails_toward_kiro(self, monkeypatch):
+        from kiro_crew import session as mod
+        from kiro_crew.acp.types import ACP_BACKEND_CLAUDE
+        from kiro_crew.config import loader as loader_mod
+
+        class _Cfg:
+            class agent:  # noqa: N801 - mirrors the config object's shape
+                provider = ""
+
+        # An explicit provider on the passed config wins without a second read.
+        for provider, expected in (("acp", ""), ("claude_code", ACP_BACKEND_CLAUDE)):
+            _Cfg.agent.provider = provider
+            assert mod._configured_acp_backend(_Cfg) == expected, provider
+
+        # No readable provider on the object -> shared resolver, kiro on None.
+        _Cfg.agent.provider = ""
+        for provider_is_kiro, expected in (
+            (True, ""),
+            (False, ACP_BACKEND_CLAUDE),
+            (None, ""),
+        ):
+            monkeypatch.setattr(
+                loader_mod, "configured_provider_is_kiro", self._resolver(provider_is_kiro)
+            )
+            assert mod._configured_acp_backend(_Cfg) == expected, provider_is_kiro

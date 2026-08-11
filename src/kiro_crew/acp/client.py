@@ -2068,9 +2068,17 @@ class AcpClient:
 
         Also records ``currentModelId`` for ``_track_metadata``'s context
         window lookup.
+
+        claude-agent-acp sends ``models: null`` and publishes its catalog as the
+        ``model`` **config option** instead, so that shape is read as a fallback —
+        otherwise every consumer of the advertised set (the dashboard picker's
+        entitlement filter, ``_advertised_model_ids``) sees nothing on that
+        backend and silently falls back to the static registry, which is how a
+        picker ends up offering models the backend rejects.
         """
         models = session_resp.get("models")
         if not isinstance(models, dict):
+            self._capture_models_from_config_option(session_resp)
             return
         current_model_id = models.get("currentModelId")
         if isinstance(current_model_id, str) and current_model_id:
@@ -2094,6 +2102,63 @@ class AcpClient:
             )
         if captured:
             self._available_models = captured
+
+    def _capture_models_from_config_option(self, session_resp: dict) -> None:
+        """Ingest a ``configOptions`` model selector as the advertised model list.
+
+        The option's ``options`` carry exactly the values
+        ``session/set_config_option`` accepts, each with the backend's own name
+        and description (``"Opus"`` / ``"Opus 5 with 1M context · …"``). Those are
+        the truthful labels — a static catalog cannot know which version a tier
+        name resolves to today — so they are recorded verbatim.
+
+        ``currentValue`` doubles as ``currentModelId``. Best-effort: a response
+        without the selector leaves the list untouched.
+        """
+        options = session_resp.get("configOptions")
+        if not isinstance(options, list):
+            return
+        if not any(isinstance(o, dict) and o.get("id") == "model" for o in options):
+            # Leave a trail: this is the whole reason a picker can come up empty
+            # on a backend that sends `models: null`. Without it the path
+            # completes "successfully" with no advertised models and the symptom
+            # only ever surfaces in the UI, with nothing to grep for.
+            logger.warning(
+                "backend sent configOptions (%d) but no 'model' selector; the "
+                "advertised model list stays empty and consumers fall back to "
+                "the static registry (option ids: %s)",
+                len(options),
+                ", ".join(
+                    str(o.get("id")) for o in options if isinstance(o, dict)
+                ) or "none",
+            )
+            return
+        for opt in options:
+            if not isinstance(opt, dict) or opt.get("id") != "model":
+                continue
+            current = opt.get("currentValue")
+            if isinstance(current, str) and current:
+                self._resolved_model_id = current
+            values = opt.get("options")
+            if not isinstance(values, list):
+                return
+            captured: list[dict[str, str]] = []
+            for entry in values:
+                if not isinstance(entry, dict):
+                    continue
+                value = entry.get("value") or ""
+                if not value:
+                    continue
+                captured.append(
+                    {
+                        "modelId": str(value),
+                        "name": str(entry.get("name") or value),
+                        "description": str(entry.get("description") or ""),
+                    }
+                )
+            if captured:
+                self._available_models = captured
+            return
 
     def available_models(self) -> list[dict[str, str]]:
         """Models advertised by the backend at session init (may be empty)."""
@@ -2164,6 +2229,26 @@ class AcpClient:
             self._model = DEFAULT_MODEL
             return
         if self._is_claude:
+            # This backend takes the model as a config option and advertises the
+            # values it accepts verbatim, so the namespace caveat in
+            # model_is_unusable does not apply — this enum IS the accepted set.
+            # Withhold for the same reason as the kiro path above, and because
+            # here the cost is worse: set_config_option rejects an unknown value
+            # with a -32603 that aborts SESSION START, not just one turn. A
+            # config carrying another backend's model id (seeded before a
+            # provider switch) would otherwise make every session unstartable.
+            _accepted = self._config_option_values("model")
+            if _accepted and self._model not in _accepted:
+                _withheld_log, _ = redact_exfiltration_urls(str(self._model))
+                _withheld_log, _ = redact_credentials(_withheld_log)
+                logger.warning(
+                    "ACP model %s is not accepted by this backend; staying on its "
+                    "default (accepted: %s)",
+                    _withheld_log,
+                    ", ".join(_accepted),
+                )
+                self._model = DEFAULT_MODEL
+                return
             await self.set_config_option("model", self._model)
         else:
             await self._send_request(
@@ -2256,20 +2341,26 @@ class AcpClient:
             isinstance(opt, dict) and opt.get("id") == config_id for opt in self._acp_config_options
         )
 
-    def get_valid_effort_levels(self) -> list[str]:
-        """Return valid effort levels from ACP config, preserving ACP order.
+    def _config_option_values(self, config_id: str) -> list[str]:
+        """Accepted values for an advertised config option, in ACP's order.
 
-        Parses configOptions for the entry with id="effort" and extracts its
-        options[].value list in the order ACP reported them.
+        Empty when the option was not advertised, or advertised without a
+        parseable ``options`` list. Callers MUST read that as "unknown", never
+        as "nothing is accepted" — a backend that advertises lazily would
+        otherwise have every value withheld.
         """
         for opt in self._acp_config_options:
             if not isinstance(opt, dict):
                 continue
-            if opt.get("id") == "effort":
+            if opt.get("id") == config_id:
                 options = opt.get("options", [])
                 if isinstance(options, list):
                     return [o["value"] for o in options if isinstance(o, dict) and "value" in o]
         return []
+
+    def get_valid_effort_levels(self) -> list[str]:
+        """Return valid effort levels from ACP config, preserving ACP order."""
+        return self._config_option_values("effort")
 
     def _next_req_id(self) -> int:
         rid = self._next_id
