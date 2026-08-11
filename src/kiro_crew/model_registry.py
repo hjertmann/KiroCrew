@@ -44,41 +44,61 @@ _REGISTRY_FILE = Path(__file__).resolve().parent / "model_registry.json"
 # Hardcoded last-resort default so a corrupt/missing registry can't brick the
 # claude_code provider. _FALLBACK_CANONICAL is the canonical key default()
 # returns when the registry didn't load. _FALLBACK_PROVIDER_IDS maps every
-# known claude_code canonical key AND alias to its valid Bedrock provider id,
-# so to_provider_id can rescue ANY persisted cc_model (not just the flagship
-# default) when the index is empty — otherwise a bare canonical key like
-# "sonnet-4.6-1m" would reach the adapter/Bedrock as an invalid model id
-# (-32603 / 400). Mirror model_registry.json's claude_code provider ids +
-# aliases; only consulted on the corrupt/missing-registry path.
+# known claude_code canonical key AND alias to the value claude-agent-acp
+# accepts for its "model" config option, so to_provider_id can rescue ANY
+# persisted cc_model (not just the flagship default) when the index is empty —
+# otherwise a bare canonical key like "sonnet-4.6-1m" would reach the adapter as
+# an invalid value, which that backend answers with a -32603 that aborts SESSION
+# START. Those values are TIER names, so several canonicals share one and the
+# Bedrock-style "global.anthropic.*" spellings map in as aliases. Mirror
+# model_registry.json's claude_code provider ids + aliases; only consulted on the
+# corrupt/missing-registry path.
 _FALLBACK_CANONICAL = "opus-4.8-1m"
-_FALLBACK_PROVIDER_ID = "global.anthropic.claude-opus-4-8[1m]"
+_FALLBACK_PROVIDER_ID = "opus[1m]"
 _FALLBACK_PROVIDER_IDS: dict[str, str] = {
-    "fable-5-1m": "global.anthropic.claude-fable-5[1m]",
-    "fable": "global.anthropic.claude-fable-5[1m]",
-    "fable-5": "global.anthropic.claude-fable-5[1m]",
-    "claude-fable-5": "global.anthropic.claude-fable-5[1m]",
-    "opus-4.8-1m": "global.anthropic.claude-opus-4-8[1m]",
-    "opus": "global.anthropic.claude-opus-4-8[1m]",
-    "claude-opus-4.8": "global.anthropic.claude-opus-4-8[1m]",
-    "claude-opus-4-8[1m]": "global.anthropic.claude-opus-4-8[1m]",
-    "claude-opus-4.6": "global.anthropic.claude-opus-4-8[1m]",
-    "claude-opus-4.6-1m": "global.anthropic.claude-opus-4-8[1m]",
-    "opus-4.8": "global.anthropic.claude-opus-4-8",
-    "claude-opus-4-8": "global.anthropic.claude-opus-4-8",
-    "claude-opus-4.5": "global.anthropic.claude-opus-4-8",
-    "opus-4.7-1m": "global.anthropic.claude-opus-4-7[1m]",
-    "claude-opus-4.7": "global.anthropic.claude-opus-4-7[1m]",
-    "claude-opus-4.7-1m": "global.anthropic.claude-opus-4-7[1m]",
-    "claude-opus-4-7[1m]": "global.anthropic.claude-opus-4-7[1m]",
-    "sonnet-4.6-1m": "global.anthropic.claude-sonnet-4-6[1m]",
-    "sonnet": "global.anthropic.claude-sonnet-4-6[1m]",
-    "claude-sonnet-4.6": "global.anthropic.claude-sonnet-4-6[1m]",
-    "claude-sonnet-4.6-1m": "global.anthropic.claude-sonnet-4-6[1m]",
-    "claude-sonnet-4-6[1m]": "global.anthropic.claude-sonnet-4-6[1m]",
-    "claude-sonnet-4.5": "global.anthropic.claude-sonnet-4-6[1m]",
-    "claude-sonnet-4.5-1m": "global.anthropic.claude-sonnet-4-6[1m]",
-    "claude-sonnet-4": "global.anthropic.claude-sonnet-4-6[1m]",
-    "claude-haiku-4.5": "global.anthropic.claude-sonnet-4-6[1m]",
+    "fable-5-1m": "claude-fable-5[1m]",
+    "fable": "claude-fable-5[1m]",
+    "fable-5": "claude-fable-5[1m]",
+    "claude-fable-5": "claude-fable-5[1m]",
+    "global.anthropic.claude-fable-5[1m]": "claude-fable-5[1m]",
+    "opus-4.8-1m": "opus[1m]",
+    # Bare "opus" is the 200K row's WIRE value, and a provider id outranks the
+    # same string used as an alias on the 1M row — mirror that here.
+    "opus": "opus",
+    "claude-opus-4.8": "opus[1m]",
+    "claude-opus-4-8[1m]": "opus[1m]",
+    "claude-opus-4.6": "opus[1m]",
+    "claude-opus-4.6-1m": "opus[1m]",
+    "global.anthropic.claude-opus-4-8[1m]": "opus[1m]",
+    "opus-4.8": "opus",
+    "claude-opus-4-8": "opus",
+    "claude-opus-4.5": "opus",
+    "global.anthropic.claude-opus-4-8": "opus",
+    # Opus 4.7 has no tier spelling — "" = let the backend pick, never 4.8
+    # wearing a 4.7 label.
+    "opus-4.7-1m": "",
+    "claude-opus-4.7": "",
+    "claude-opus-4.7-1m": "",
+    "claude-opus-4-7[1m]": "",
+    "global.anthropic.claude-opus-4-7[1m]": "",
+    # Every Sonnet-class spelling maps to the one "sonnet" tier: the version is not
+    # expressible on this backend, and "" would hand the caller the org default
+    # (possibly Opus) instead of the cheap tier they asked for. The 200K row owns
+    # the reverse fold so the reported window matches what a bare "sonnet" is
+    # actually served at.
+    "sonnet": "sonnet",
+    "sonnet-4.5": "sonnet",
+    "sonnet-4.6-1m": "",
+    "claude-sonnet-4.5": "sonnet",
+    "claude-sonnet-4.5-1m": "sonnet",
+    "claude-sonnet-4": "sonnet",
+    "claude-sonnet-4.6": "sonnet",
+    "claude-sonnet-4.6-1m": "sonnet",
+    "claude-sonnet-4-6[1m]": "sonnet",
+    "global.anthropic.claude-sonnet-4-6[1m]": "sonnet",
+    "haiku-4.5": "haiku",
+    "haiku": "haiku",
+    "claude-haiku-4.5": "haiku",
     "auto": "",
 }
 
@@ -255,19 +275,35 @@ def persist_kiro_windows() -> None:
 _CANONICAL_INDEX: dict[str, dict[str, str]] = {}
 # canonical key -> default flag, for cheap default resolution per provider.
 _DEFAULTS: dict[str, str] = {}
+# Every non-empty providers.claude_code value — the claude backend's accepted wire
+# values. Read by _registry_window to resolve a tier name in the claude_code index
+# instead of the acp one (see its docstring).
+_CC_PROVIDER_IDS: set[str] = set()
 
 
 def _build_indices() -> None:
     """(Re)build the lookup indices from ``_REGISTRY``. Idempotent."""
     _CANONICAL_INDEX.clear()
     _DEFAULTS.clear()
+    _CC_PROVIDER_IDS.clear()
     for key, entry in _REGISTRY.items():
+        _cc_pid = entry.get("providers", {}).get("claude_code")
+        if isinstance(_cc_pid, str) and _cc_pid:
+            _CC_PROVIDER_IDS.add(_cc_pid)
+        # Per-provider aliases exist because `aliases` is ONE namespace applied to
+        # every provider in the row: adding a spelling so it folds on one backend
+        # silently re-points that spelling on the other's index too (first row
+        # wins, by declaration order). Anything under `provider_aliases.<name>`
+        # is inserted only when building that provider's index, so a fold can
+        # never mutate a sibling backend's canonical resolution.
+        _per_provider = entry.get("provider_aliases", {})
         for provider, pid in entry.get("providers", {}).items():
             idx = _CANONICAL_INDEX.setdefault(provider, {})
             idx[key] = key  # canonical key resolves to itself
             if pid:
                 idx[pid] = key  # provider id -> canonical
-            for alias in entry.get("aliases", []):
+            _own = _per_provider.get(provider, []) if isinstance(_per_provider, dict) else []
+            for alias in (*entry.get("aliases", []), *_own):
                 idx.setdefault(alias, key)  # alias -> canonical (first wins)
             if entry.get("default"):
                 _DEFAULTS.setdefault(provider, key)
@@ -395,7 +431,21 @@ def _registry_window(canonical_or_id: str) -> int | None:
     window is a property of the model AS SERVED, and the default provider is acp,
     so the acp view is authoritative; claude_code is the fallback for ids only it
     lists. A canonical key/alias unique to one index resolves in that index.
+
+    EXCEPT for a claude_code wire value (``sonnet``, ``opus``, …), which is looked
+    up in the claude_code index FIRST. Those bare tier names are also aliases of
+    the 1M canonicals on the kiro side, so the acp-first walk resolved ``opus`` to
+    a 1M row while the claude backend means Opus WITHOUT the 1M flag — a 200K
+    session reported as 1M, which makes the context budget over-assemble. A tier
+    name is not an id kiro serves (its ids are dotted, ``claude-opus-4.8``), so
+    preferring claude_code for exactly this set cannot mis-resolve a kiro model.
     """
+    if canonical_or_id in _CC_PROVIDER_IDS:
+        key = _resolve_canonical(canonical_or_id, _WINDOW_INDEX)
+        if key is not None:
+            win = _REGISTRY[key].get("window")
+            if isinstance(win, int) and win > 0:
+                return int(win)
     for provider in ("acp", _WINDOW_INDEX):
         key = _resolve_canonical(canonical_or_id, provider)
         if key is not None:

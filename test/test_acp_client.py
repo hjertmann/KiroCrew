@@ -6781,6 +6781,51 @@ class TestCaptureAvailableModels:
         c._capture_available_models({"sessionId": "s"})
         assert c.available_models() == []
 
+    def test_falls_back_to_the_model_config_option(self):
+        """claude-agent-acp sends models: null and a 'model' configOptions entry.
+
+        Without this fallback every consumer of the advertised set sees nothing on
+        that backend, and the dashboard picker silently degrades to the static
+        registry — offering models the backend will reject.
+        """
+        c = self._client()
+        c._capture_available_models(
+            {
+                "sessionId": "s",
+                "models": None,
+                "configOptions": [
+                    {"id": "effort", "options": [{"value": "high"}]},
+                    {
+                        "id": "model",
+                        "currentValue": "default",
+                        "options": [
+                            {
+                                "value": "sonnet",
+                                "name": "Sonnet",
+                                "description": "Sonnet 5 - routine tasks",
+                            },
+                            {"value": "opus[1m]", "name": "Opus (1M context)"},
+                        ],
+                    },
+                ],
+            }
+        )
+        am = c.available_models()
+        assert [m["modelId"] for m in am] == ["sonnet", "opus[1m]"]
+        # The backend's own label and version claim survive verbatim.
+        assert am[0]["description"] == "Sonnet 5 - routine tasks"
+        assert am[1]["name"] == "Opus (1M context)"
+        assert am[1]["description"] == ""
+        # currentValue doubles as currentModelId for the window lookup.
+        assert c._resolved_model_id == "default"
+
+    def test_config_option_without_model_selector_leaves_empty(self):
+        c = self._client()
+        c._capture_available_models(
+            {"models": None, "configOptions": [{"id": "effort", "options": [{"value": "high"}]}]}
+        )
+        assert c.available_models() == []
+
     def test_entries_without_modelid_skipped(self):
         c = self._client()
         c._capture_available_models(
@@ -9711,6 +9756,49 @@ class TestModelEntitlementPreflight:
         await client._apply_startup_model()
 
         assert applied == [("model", "global.anthropic.claude-opus-4-8[1m]")]
+
+    @pytest.mark.asyncio
+    async def test_startup_withholds_model_the_claude_enum_rejects(self):
+        """A config seeded before a provider switch must not brick session start.
+
+        set_config_option answers an unaccepted value with a -32603 that aborts
+        session INIT, so sending another backend's id makes every session
+        unstartable rather than costing one turn.
+        """
+        from kiro_crew.acp.client import DEFAULT_MODEL
+
+        client = self._client([], "sonnet-4.6-1m", is_claude=True)
+        client._acp_config_options = [
+            {"id": "model", "options": [{"value": "default"}, {"value": "sonnet"}]}
+        ]
+        applied = []
+
+        async def _set_config_option(config_id, value):
+            applied.append((config_id, value))
+
+        client.set_config_option = _set_config_option
+
+        await client._apply_startup_model()
+
+        assert applied == []
+        assert client._model == DEFAULT_MODEL
+
+    @pytest.mark.asyncio
+    async def test_startup_applies_a_model_the_claude_enum_accepts(self):
+        client = self._client([], "sonnet", is_claude=True)
+        client._acp_config_options = [
+            {"id": "model", "options": [{"value": "default"}, {"value": "sonnet"}]}
+        ]
+        applied = []
+
+        async def _set_config_option(config_id, value):
+            applied.append((config_id, value))
+
+        client.set_config_option = _set_config_option
+
+        await client._apply_startup_model()
+
+        assert applied == [("model", "sonnet")]
 
     @pytest.mark.asyncio
     async def test_explicit_switch_is_refused_not_downgraded(self):

@@ -106,6 +106,13 @@ export interface ProviderLabels {
 
 export interface ModelInfo {
   name: string
+  /** Human label the BACKEND reports for this row, when it reports one. Distinct
+   *  from `name`, which is the canonical key that is stored in config and sent on
+   *  the wire — a tier-based backend (claude-agent-acp) names a tier ("Opus") and
+   *  only it knows which version that resolves to today, so a picker must render
+   *  this in preference to the key. Absent on backends that report no label, where
+   *  `name` remains the only thing to show. */
+  label?: string
   description: string
   contextWindow?: number
   supportsExtendedContext?: boolean

@@ -714,6 +714,117 @@ async def test_runtime_spawn_passes_installed_path_through_exact_wrappers(
     assert (Path(launch_path).parent / "kiro-cli-chat").exists()
 
 
+@pytest.mark.asyncio
+async def test_runtime_spawn_follows_the_claude_backend(tmp_path, monkeypatch):
+    """A claude-backed runtime spawns claude-agent-acp, never kiro-cli.
+
+    The background (kirocrew-lite) and companion subagent runtimes used to
+    hardcode kiro-cli regardless of ``agent.provider``, so on a claude_code
+    gateway they died at handshake with ``process exited (rc=None)`` — the CLI
+    may be absent or signed out there. Pins the four things that must differ:
+    the binary, the absence of kiro's ``--agent`` argv (claude takes the agent
+    per session), the sandbox's ``is_kiro_cli`` flag, and CLAUDE_CODE_EXECUTABLE
+    (the Agent SDK does not search PATH).
+    """
+    import kiro_crew.acp.runtime as runtime_mod
+    from kiro_crew.acp.types import ACP_BACKEND_CLAUDE
+
+    wrapped: dict[str, object] = {}
+
+    class _StopSpawn(Exception):
+        pass
+
+    def capture_wrap(argv, mode, **kwargs):
+        wrapped.update(argv=list(argv), mode=mode, kwargs=kwargs)
+        return list(argv), None
+
+    async def stop_spawn(*args, **kwargs):
+        wrapped["env"] = kwargs.get("env") or {}
+        raise _StopSpawn()
+
+    def boom():  # pragma: no cover - must never be reached on this backend
+        raise AssertionError("kiro-cli resolver must not run for a claude runtime")
+
+    # spawn() copies os.environ and only consults the resolver when the var is
+    # UNSET, so a developer who exports it (i.e. anyone with Claude Code
+    # installed — this feature's own audience) would otherwise see their real
+    # path flow through and the assertion below compare against their machine.
+    # Same isolation the resolver's own tests use in test_acp_client.py.
+    monkeypatch.delenv("CLAUDE_CODE_EXECUTABLE", raising=False)
+    monkeypatch.setattr(runtime_mod, "_resolve_claude_acp_bin", lambda: ["/usr/bin/cc-acp"])
+    monkeypatch.setattr(runtime_mod, "_resolve_claude_code_executable", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(runtime_mod, "_resolve_kiro_bin_for_spawn", boom)
+    monkeypatch.setattr(runtime_mod, "wrap_argv", capture_wrap)
+    monkeypatch.setattr(runtime_mod, "cgroup_scope_argv", lambda argv: list(argv))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", stop_spawn)
+
+    runtime = AcpRuntime(
+        work_dir=tmp_path / "workspace",
+        agent="kirocrew-lite",
+        acp_backend=ACP_BACKEND_CLAUDE,
+    )
+    with pytest.raises(_StopSpawn):
+        await runtime.spawn()
+
+    assert wrapped["argv"] == ["/usr/bin/cc-acp"]
+    assert wrapped["kwargs"] == {"strip_python_env": True, "is_kiro_cli": False}
+    env = wrapped["env"]
+    assert isinstance(env, dict)
+    assert env["CLAUDE_CODE_EXECUTABLE"] == "/usr/bin/claude"
+
+
+@pytest.mark.asyncio
+async def test_runtime_keeps_a_caller_supplied_claude_executable(tmp_path, monkeypatch):
+    """An operator-pinned CLAUDE_CODE_EXECUTABLE wins over the resolver.
+
+    The spawn only resolves when the var is absent, so a value handed in via
+    ``extra_env`` (or exported by the host) must survive untouched — that is the
+    documented escape hatch for pinning a specific install, and the resolver
+    must not be consulted at all.
+    """
+    import kiro_crew.acp.runtime as runtime_mod
+    from kiro_crew.acp.types import ACP_BACKEND_CLAUDE
+
+    wrapped: dict[str, object] = {}
+
+    class _StopSpawn(Exception):
+        pass
+
+    async def stop_spawn(*args, **kwargs):
+        wrapped["env"] = kwargs.get("env") or {}
+        raise _StopSpawn()
+
+    def boom():  # pragma: no cover - a pinned value must short-circuit this
+        raise AssertionError("resolver must not run when the var is already set")
+
+    monkeypatch.delenv("CLAUDE_CODE_EXECUTABLE", raising=False)
+    monkeypatch.setattr(runtime_mod, "_resolve_claude_acp_bin", lambda: ["/usr/bin/cc-acp"])
+    monkeypatch.setattr(runtime_mod, "_resolve_claude_code_executable", boom)
+    monkeypatch.setattr(runtime_mod, "wrap_argv", lambda argv, mode, **kw: (list(argv), None))
+    monkeypatch.setattr(runtime_mod, "cgroup_scope_argv", lambda argv: list(argv))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", stop_spawn)
+
+    runtime = AcpRuntime(
+        work_dir=tmp_path / "workspace",
+        agent="kirocrew-lite",
+        acp_backend=ACP_BACKEND_CLAUDE,
+        extra_env={"CLAUDE_CODE_EXECUTABLE": "/opt/pinned/claude"},
+    )
+    with pytest.raises(_StopSpawn):
+        await runtime.spawn()
+
+    env = wrapped["env"]
+    assert isinstance(env, dict)
+    assert env["CLAUDE_CODE_EXECUTABLE"] == "/opt/pinned/claude"
+
+
+def test_runtime_defaults_to_the_kiro_backend():
+    """No acp_backend argument means kiro-cli, so existing callers are unchanged."""
+    runtime = AcpRuntime()
+    assert runtime._acp_backend == ""
+    assert runtime._is_claude is False
+
+
 # ── Process death propagation ──
 
 

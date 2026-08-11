@@ -546,7 +546,7 @@ class TestModelMatchesPoolDefault:
         with patch.object(type(mgr), "_resolve_agent_model", return_value="default-model"):
             await mgr.get_or_create("test-key", agent="kirocrew", model="opus-4.8-1m")
 
-        pooled.client.set_model.assert_awaited_once_with("global.anthropic.claude-opus-4-8[1m]")
+        pooled.client.set_model.assert_awaited_once_with("opus[1m]")
 
     @pytest.mark.asyncio
     async def test_pool_claude_backend_skips_redundant_switch_cross_namespace(self):

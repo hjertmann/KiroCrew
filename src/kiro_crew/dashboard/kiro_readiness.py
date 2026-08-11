@@ -36,9 +36,30 @@ _KIRO_NOT_READY_RESPONSE = {
 _VERIFY_MAX_AGE_SECS = 30.0
 
 
+def _kiro_backend_active() -> bool:
+    """False when the active provider is not kiro-backed, so nothing to gate.
+
+    Every check in this module exists to protect ``kiro-cli`` spawns and to keep
+    a signed-out kiro install from silently eating a destructive rerun. On the
+    ``claude_code`` backend neither concern exists: no kiro subprocess is ever
+    launched, and ``whoami`` can never pass on a host that has no kiro-cli at
+    all — so gating on it would lock the dashboard out permanently.
+
+    Fails toward GATING: an unreadable config returns True, keeping today's
+    behaviour rather than opening the gates on a guess.
+    """
+
+    from kiro_crew.config.loader import configured_provider_is_kiro
+
+    # None = config unreadable; this call site fails toward GATING.
+    return configured_provider_is_kiro() is not False
+
+
 async def kiro_session_ready(service: object) -> bool:
     """Return the service's latched readiness. Fails closed on a bad service."""
 
+    if not _kiro_backend_active():
+        return True
     if not isinstance(service, KiroPrerequisiteService):
         return False
     return await service.session_ready()
@@ -104,6 +125,8 @@ async def reject_if_kiro_unverified(request: web.Request) -> web.Response | None
     browser-opening spawn), and only these paths pay for the re-probe.
     """
 
+    if not _kiro_backend_active():
+        return None
     if await kiro_verified_ready(_service(request)):
         return None
     return web.json_response(_KIRO_NOT_READY_RESPONSE, status=503)

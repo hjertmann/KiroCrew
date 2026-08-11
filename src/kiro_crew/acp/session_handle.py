@@ -1133,6 +1133,26 @@ class AcpSessionHandle:
                 self._available_models = self._normalize_models(avail)
         elif isinstance(models, list):
             self._available_models = self._normalize_models(models)
+        elif isinstance(config_options, list):
+            # claude-agent-acp sends `models: null` and publishes its catalog as
+            # the `model` configOption instead. Without this the advertised set
+            # stays empty and every consumer of it (the dashboard picker's
+            # entitlement filter, the effort/model gates) silently falls back to
+            # the static registry — which is how a picker comes to offer models
+            # the backend rejects. Parity with
+            # AcpClient._capture_models_from_config_option.
+            for opt in config_options:
+                if not isinstance(opt, dict) or opt.get("id") != "model":
+                    continue
+                current = opt.get("currentValue")
+                if isinstance(current, str) and current:
+                    self._resolved_model_id = current
+                values = opt.get("options")
+                if isinstance(values, list):
+                    # `_normalize_models` already reads `value` as a modelId
+                    # alias, which is the spelling these entries use.
+                    self._available_models = self._normalize_models(values)
+                break
 
     @staticmethod
     def _normalize_models(advertised: list[Any]) -> list[dict[str, str]]:

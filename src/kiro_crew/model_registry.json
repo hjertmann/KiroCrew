@@ -1,20 +1,33 @@
 {
-  "_comment": "Canonical model registry. Source of truth for Python (model_registry.py) and frontend (modelRegistry.ts). Canonical keys are versioned+capability. providers maps canonical -> per-provider id: 'claude_code' is the claude-agent-acp id (global.anthropic.*[1m]), 'acp' is the kiro-cli id (bare dotted, e.g. 'claude-opus-4.8', as advertised by 'kiro-cli chat --list-models'). window = context tokens. Aliases include each provider id's bare (prefix-stripped) form, e.g. 'claude-opus-4-8[1m]', because claude-agent-acp advertises bare ids without the 'global.anthropic.' prefix; listing them lets from_provider_id fold the advertised rows onto the canonical key so the dropdown does not show duplicates.",
+  "_comment": "Canonical model registry. Source of truth for Python (model_registry.py) and frontend (modelRegistry.ts). Canonical keys are versioned+capability. providers maps canonical -> per-provider id: 'claude_code' is the value claude-agent-acp accepts for its 'model' config option (a TIER name, not a versioned id: 'sonnet', 'opus', 'opus[1m]', 'haiku', 'claude-fable-5[1m]', 'default'), 'acp' is the kiro-cli id (bare dotted, e.g. 'claude-opus-4.8', as advertised by 'kiro-cli chat --list-models'). window = context tokens. Because the claude tier vocabulary carries no version, several versioned canonicals share one wire value and the version-only entries (Opus 4.7) carry no claude_code id at all — they resolve to '' = let the backend pick. Aliases list the 'global.anthropic.*' Bedrock-style spellings an internal companion (and any config persisted before this mapping) uses, so from_provider_id still folds them onto the canonical key instead of showing a duplicate row. The accepted set is advertised per session (configOptions id='model'); acp/client.py withholds anything absent from it rather than letting a stale id abort session start.",
   "fable-5-1m": {
     "display": "Fable 5 (1M context)",
     "description": "Most intelligent, demanding reasoning and agentic work",
     "window": 1000000,
     "supports_effort": true,
-    "aliases": ["fable", "fable-5", "claude-fable-5"],
-    "providers": { "claude_code": "global.anthropic.claude-fable-5[1m]", "acp": "claude-fable-5" }
+    "aliases": [
+      "fable",
+      "fable-5",
+      "claude-fable-5",
+      "global.anthropic.claude-fable-5[1m]"
+    ],
+    "providers": {
+      "claude_code": "claude-fable-5[1m]",
+      "acp": "claude-fable-5"
+    }
   },
   "opus-4.6-1m": {
     "display": "Opus 4.6 (1M context)",
     "description": "Highly capable, 1M context",
     "window": 1000000,
     "supports_effort": true,
-    "aliases": ["claude-opus-4.6", "claude-opus-4.6-1m"],
-    "providers": { "acp": "claude-opus-4.6" }
+    "aliases": [
+      "claude-opus-4.6",
+      "claude-opus-4.6-1m"
+    ],
+    "providers": {
+      "acp": "claude-opus-4.6"
+    }
   },
   "opus-4.8-1m": {
     "display": "Opus 4.8 (1M context)",
@@ -23,53 +36,106 @@
     "default": true,
     "supports_effort": true,
     "_comment_aliases": "claude-opus-4.6/-4.6-1m stay listed here as claude_code aliases ONLY so claude-agent-acp (which lacks a distinct Opus 4.6) folds them onto Opus 4.8. On the 'acp' (kiro) path Opus 4.6 is a DISTINCT real model with its own canonical entry (opus-4.6-1m) above.",
-    "aliases": ["opus", "claude-opus-4.8", "claude-opus-4-8[1m]", "claude-opus-4.6", "claude-opus-4.6-1m"],
-    "providers": { "claude_code": "global.anthropic.claude-opus-4-8[1m]", "acp": "claude-opus-4.8" }
+    "aliases": [
+      "opus",
+      "claude-opus-4.8",
+      "claude-opus-4-8[1m]",
+      "claude-opus-4.6",
+      "claude-opus-4.6-1m",
+      "global.anthropic.claude-opus-4-8[1m]"
+    ],
+    "providers": {
+      "claude_code": "opus[1m]",
+      "acp": "claude-opus-4.8"
+    }
   },
   "opus-4.8": {
     "display": "Opus 4.8 (200K)",
     "description": "Most capable, 200K context",
     "window": 200000,
     "supports_effort": true,
-    "aliases": ["claude-opus-4-8", "claude-opus-4.5"],
-    "providers": { "claude_code": "global.anthropic.claude-opus-4-8", "acp": "claude-opus-4.5" }
+    "aliases": [
+      "claude-opus-4-8",
+      "claude-opus-4.5",
+      "global.anthropic.claude-opus-4-8"
+    ],
+    "providers": {
+      "claude_code": "opus",
+      "acp": "claude-opus-4.5"
+    }
   },
   "opus-4.7-1m": {
     "display": "Opus 4.7 (1M context)",
     "description": "Most capable for complex work, 1M context",
     "window": 1000000,
     "supports_effort": true,
-    "aliases": ["claude-opus-4.7", "claude-opus-4.7-1m", "claude-opus-4-7[1m]"],
-    "providers": { "claude_code": "global.anthropic.claude-opus-4-7[1m]", "acp": "claude-opus-4.7" }
+    "_comment_claude_code": "Empty claude_code id: the tier vocabulary has no 4.7, and spelling it 'opus[1m]' would make Opus 4.7 and 4.8 indistinguishable on the wire, so '' resolves to the backend's own pick rather than silently running 4.8 under a 4.7 label. Present-but-empty rather than absent, because _build_indices walks the providers map — omitting the key would drop this entry's aliases from the claude_code index, and a persisted 4.7 id would stop folding onto a canonical row.",
+    "aliases": [
+      "claude-opus-4.7",
+      "claude-opus-4.7-1m",
+      "claude-opus-4-7[1m]",
+      "global.anthropic.claude-opus-4-7[1m]"
+    ],
+    "providers": {
+      "claude_code": "",
+      "acp": "claude-opus-4.7"
+    }
   },
   "sonnet-4.5": {
     "display": "Sonnet 4.5 (200K)",
     "description": "Everyday tasks, 200K context",
     "window": 200000,
     "supports_effort": true,
-    "aliases": ["claude-sonnet-4.5"],
-    "providers": { "acp": "claude-sonnet-4.5" }
+    "_comment_claude_code": "SOLE claimer of the claude backend's bare 'sonnet' tier, because that value has no [1m] flag and is therefore served at 200K — parking it on the 1M sonnet entry reported a 200K session as 1M and made the context budget over-assemble. Only one row may claim a wire value: _build_indices ASSIGNS provider ids (unlike aliases, which setdefault), so a second claimer silently wins by declaration order. The Sonnet-class folds live under provider_aliases.claude_code, NOT the shared aliases list: the 1M spellings (claude-sonnet-4.6-1m, claude-sonnet-4-6[1m]) are not a provider id of any row, so putting them in the shared list re-pointed them on the acp index too and shrank kiro's 1M Sonnet to 200K. Per-provider entries are only inserted while building their own provider's index. This row's version label is stale for the claude backend (the tier resolves to whatever Sonnet is current) and that is harmless: the picker takes display name and description from the live advertised list, so only the window is read from here.",
+    "aliases": [
+      "claude-sonnet-4.5",
+      "claude-sonnet-4.5-1m",
+      "claude-sonnet-4",
+      "claude-sonnet-4.6"
+    ],
+    "provider_aliases": {
+      "claude_code": [
+        "claude-sonnet-4.6",
+        "claude-sonnet-4.6-1m",
+        "claude-sonnet-4-6[1m]",
+        "global.anthropic.claude-sonnet-4-6[1m]"
+      ]
+    },
+    "providers": {
+      "claude_code": "sonnet",
+      "acp": "claude-sonnet-4.5"
+    }
   },
   "sonnet-4": {
     "display": "Sonnet 4 (200K)",
     "description": "Hybrid reasoning and coding, 200K context",
     "window": 200000,
-    "aliases": ["claude-sonnet-4"],
-    "providers": { "acp": "claude-sonnet-4" }
+    "aliases": [
+      "claude-sonnet-4"
+    ],
+    "providers": {
+      "acp": "claude-sonnet-4"
+    }
   },
   "haiku-4.5": {
     "display": "Haiku 4.5 (200K)",
     "description": "Fastest, cheapest, 200K context",
     "window": 200000,
-    "aliases": ["claude-haiku-4.5"],
-    "providers": { "acp": "claude-haiku-4.5" }
+    "aliases": [
+      "claude-haiku-4.5",
+      "haiku"
+    ],
+    "providers": {
+      "claude_code": "haiku",
+      "acp": "claude-haiku-4.5"
+    }
   },
   "sonnet-4.6-1m": {
     "display": "Sonnet 4.6 (1M context)",
     "description": "Best for everyday tasks, 1M context",
     "window": 1000000,
     "supports_effort": true,
-    "_comment_aliases": "claude-sonnet-4.5/-4/haiku-4.5 stay listed as claude_code aliases ONLY so claude-agent-acp (which lacks those distinct models) still folds them onto Sonnet 4.6 for dropdown dedup + graceful downgrade. On the 'acp' (kiro) path they are DISTINCT real models with their own canonical entries above (haiku-4.5/sonnet-4.5/sonnet-4, 200K) — declared first so the per-provider acp index maps each kiro id to itself, not to this 1M canonical. See from_provider_id / _registry_window (provider-aware).",
+    "_comment_aliases": "claude-sonnet-4.5/-4 stay listed as claude_code aliases ONLY so claude-agent-acp (which lacks those distinct models) still folds them onto Sonnet 4.6 for dropdown dedup + graceful downgrade. On the 'acp' (kiro) path they are DISTINCT real models with their own canonical entries above (haiku-4.5/sonnet-4.5/sonnet-4, 200K) — declared first so the per-provider acp index maps each kiro id to itself, not to this 1M canonical. claude-haiku-4.5 is NOT folded here: the claude tier vocabulary does have 'haiku', so haiku-4.5 carries its own claude_code id and a Haiku pin stays Haiku on both backends. See from_provider_id / _registry_window (provider-aware).",
     "aliases": [
       "sonnet",
       "claude-sonnet-4.6",
@@ -78,14 +144,21 @@
       "claude-sonnet-4.5",
       "claude-sonnet-4.5-1m",
       "claude-sonnet-4",
-      "claude-haiku-4.5"
+      "global.anthropic.claude-sonnet-4-6[1m]"
     ],
-    "providers": { "claude_code": "global.anthropic.claude-sonnet-4-6[1m]", "acp": "claude-sonnet-4.6" }
+    "_comment_claude_code": "Empty: the 200K sonnet-4.5 row is the sole claimer of the 'sonnet' tier (a 1M Sonnet is not on this backend's menu at all). Its Sonnet-class aliases are mirrored there so a pin still lands on 'sonnet'; only this bare canonical key resolves to '' = let the backend pick.",
+    "providers": {
+      "claude_code": "",
+      "acp": "claude-sonnet-4.6"
+    }
   },
   "auto": {
     "display": "Auto",
     "description": "Let the provider pick the model",
     "window": 200000,
-    "providers": { "claude_code": "", "acp": "" }
+    "providers": {
+      "claude_code": "",
+      "acp": ""
+    }
   }
 }

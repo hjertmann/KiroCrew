@@ -156,6 +156,32 @@ ClaudeCodeProvider = None  # type: ignore[assignment,misc]
 logger = logging.getLogger(__name__)
 
 
+def _configured_acp_backend(cfg: Any) -> str:
+    """The ACP backend id implied by ``agent.provider``, for a runtime spawn.
+
+    Returns ``ACP_BACKEND_CLAUDE`` for the ``claude_code`` provider and ``""``
+    (kiro-cli, the AcpRuntime default) for everything else. Used by runtimes
+    that are NOT spawned from a parent provider — the kirocrew-lite background
+    runtime — and so cannot mirror one via ``_parent_runtime_kwargs``.
+
+    Fails toward kiro-cli when the config cannot be read, matching every other
+    provider-dispatch site: today's behaviour for an unreadable config.
+    """
+    from kiro_crew.acp.types import ACP_BACKEND_CLAUDE
+    from kiro_crew.config.loader import PROVIDER_CLAUDE_CODE, configured_provider_is_kiro
+
+    # Prefer the caller's already-loaded config (no second read); fall back to
+    # the shared resolver when it carries no readable provider. None = config
+    # unreadable; this call site fails toward the kiro-cli runtime.
+    try:
+        provider = getattr(cfg.agent, "provider", "")
+    except Exception:
+        provider = ""
+    if provider:
+        return ACP_BACKEND_CLAUDE if provider == PROVIDER_CLAUDE_CODE else ""
+    return "" if configured_provider_is_kiro() is not False else ACP_BACKEND_CLAUDE
+
+
 def _is_claude_backend(provider: Any) -> bool:
     """Check if a provider drives the claude-agent-acp seam via the ACP adapter.
 
@@ -1146,9 +1172,14 @@ class SessionManager:
                     # passes the config mode (default "off", which kiro-cli's own
                     # internal sandbox covers); mirror it here so the bg session
                     # has the same posture rather than a stricter accidental one.
+                    # Follow the configured provider: on a claude_code gateway a
+                    # kiro-cli spawn here would die at handshake (absent or
+                    # signed-out CLI), silently killing the bg session — chat
+                    # titles, suggestions, tips, nav links, the model picker.
                     runtime = AcpRuntime(
                         agent="kirocrew-lite",
                         sandbox_mode=getattr(self._cfg.agent, "sandbox", "auto"),
+                        acp_backend=_configured_acp_backend(self._cfg),
                     )
                     await runtime.spawn()
                     self._bg_runtime = runtime
@@ -1545,6 +1576,11 @@ class SessionManager:
             ("_mcp_gateway_overlay", "mcp_gateway_overlay"),
             ("_mcp_gateway_settings_mcp_json", "mcp_gateway_settings_mcp_json"),
             ("_mcp_gateway_socket", "mcp_gateway_socket"),
+            # Spawn the SAME backend the parent runs. Without this a claude_code
+            # parent's companion subagent runtime spawned kiro-cli, which on such
+            # a host may be absent or signed out — the runtime then dies at
+            # handshake as `process exited (rc=None)` mid-subagent.
+            ("_acp_backend", "acp_backend"),
         ):
             val = getattr(client, attr, None)
             if val is not None:
